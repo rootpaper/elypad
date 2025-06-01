@@ -7,6 +7,7 @@ class Elypad {
     this.tabCounter = 0;
     this.unsavedChanges = new Set();
     this.findDialog = null;
+    this.mediaViewer = null;
 
     this.initializeElements();
     this.setupEventListeners();
@@ -48,6 +49,11 @@ class Elypad {
     this.findDialog = document.getElementById('find-dialog');
     this.findInput = document.getElementById('find-input');
     this.replaceInput = document.getElementById('replace-input');
+
+    this.mediaViewer = document.createElement('div');
+    this.mediaViewer.className = 'media-viewer';
+    this.mediaViewer.style.display = 'none';
+    document.body.appendChild(this.mediaViewer);
   }
 
   setupMonacoEditor() {
@@ -60,32 +66,49 @@ class Elypad {
       base: 'vs-dark',
       inherit: true,
       rules: [
-        { token: 'comment.lua', foreground: '666666', fontStyle: 'italic' },
-        { token: 'string.lua', foreground: '98c379' },
+        { token: 'comment.lua', foreground: '6a737d', fontStyle: 'italic' },
+        { token: 'string.lua', foreground: 'e6c07b' },
         { token: 'number.lua', foreground: 'd19a66' },
         { token: 'keyword.lua', foreground: 'c678dd', fontStyle: 'bold' },
-        { token: 'function.lua', foreground: '61afef' },
-        { token: 'operator.lua', foreground: '56b6c2' },
-        { token: 'punctuation.lua', foreground: 'abb2bf' }
+        { token: 'identifier.lua', foreground: 'abb2bf' },
+        { token: 'function.lua', foreground: '61afef', fontStyle: 'bold' },
+        { token: 'operator.lua', foreground: '98c379' },
+        { token: 'punctuation.lua', foreground: '5c6370' }
       ],
       colors: {
-        'editor.background': '#1a1a1a',
-        'editor.foreground': '#e0e0e0'
+        'editor.background': '#1e2227',
+        'editor.foreground': '#abb2bf',
+        'editor.lineHighlightBackground': '#2c313a',
+        'editor.selectionBackground': '#3e4451',
+        'editorCursor.foreground': '#528bff'
       }
     });
 
     window.monaco.languages.register({ id: 'lua' });
     window.monaco.languages.setMonarchTokensProvider('lua', {
-      keywords: ['and', 'break', 'do', 'else', 'elseif', 'end', 'false', 'for', 'function', 'goto', 'if', 'in', 'local', 'nil', 'not', 'or', 'repeat', 'return', 'then', 'true', 'until', 'while'],
+      keywords: [
+        'and', 'break', 'do', 'else', 'elseif', 'end', 'false', 'for', 'function',
+        'goto', 'if', 'in', 'local', 'nil', 'not', 'or', 'repeat', 'return',
+        'then', 'true', 'until', 'while'
+      ],
+      operators: [
+        '+', '-', '*', '/', '//', '%', '^', '#', '&', '|', '~', '<<', '>>', '..',
+        '<', '<=', '>', '>=', '==', '~=', '=', '(', ')', '{', '}', '[', ']',
+        ';', ':', ',', '.', '...'
+      ],
       tokenizer: {
         root: [
-          [/--(?:\[(=*)\[[\s\S]*?\]\1\]|.*)/, 'comment'],
-          [/(["'])(?:(?!\1)[^\\\r\n]|\\z(?:\r\n|\s)|\\(?:\r\n|[\s\S]))*\1|\[(=*)\[[\s\S]*?\]\2\]/, 'string'],
-          [/\b0x[a-f\d]+(?:\.[a-f\d]*)?(?:p[+-]?\d+)?\b|\b\d+(?:\.\b|(?:\.\d*)?(?:e[+-]?\d+)?\b)|\b\.\d+(?:e[+-]?\d+)?\b/i, 'number'],
-          [/\b(?:and|break|do|else|elseif|end|false|for|function|goto|if|in|local|nil|not|or|repeat|return|then|true|until|while)\b/, 'keyword'],
-          [/(?!\d)\w+(?=\s*(?:[({]|$))/, 'function'],
-          [/[-+*%^&|#]|\/\/?|<[<=]?|>[>=]?|[=~]=?/, 'operator'],
-          [/[\[\](){},;]|\.+|:+/, 'punctuation']
+          [/--\[\[(?:.|\n)*?\]\]/, 'comment.lua'],
+          [/--[^\n]*/, 'comment.lua'],
+          [/\[(=*)\[[\s\S]*?\]\1\]/, 'string.lua'],
+          [/"(?:\\(?:\r\n|[\s\S])|[^\\\n"])*"/, 'string.lua'],
+          [/'(?:\\(?:\r\n|[\s\S])|[^\\\n'])*'/, 'string.lua'],
+          [/\b0x[\da-fA-F]+\b|\b\d+\.?\d*(?:[eE][+-]?\d+)?\b/, 'number.lua'],
+          [/\bfunction\s+([a-zA-Z_][\w]*)/, ['keyword.lua', 'function.lua']],
+          [/\b(?:and|break|do|else|elseif|end|false|for|function|goto|if|in|local|nil|not|or|repeat|return|then|true|until|while)\b/, 'keyword.lua'],
+          [/[a-zA-Z_][\w]*/, 'identifier.lua'],
+          [/[+\-*/%#^&|~<>=(){}\[\];:,\.]/, 'operator.lua'],
+          [/\.\.\./, 'operator.lua']
         ]
       }
     });
@@ -126,7 +149,10 @@ class Elypad {
 
   handleDrop(e) {
     e.preventDefault();
-    if (!window.electronAPI) return;
+    if (!window.electronAPI) {
+      this.showError('electron api unavailable');
+      return;
+    }
     const files = e.dataTransfer.files;
     for (const file of files) {
       window.electronAPI.getFileStats(file.path).then(stats => {
@@ -135,6 +161,8 @@ class Elypad {
         } else if (stats.success && stats.isFile) {
           this.loadFile(file.path);
         }
+      }).catch(err => {
+        this.showError('failed to process dropped file');
       });
     }
   }
@@ -170,6 +198,28 @@ class Elypad {
 
   handleKeydown(e) {
     const ctrl = e.ctrlKey || e.metaKey;
+    const tab = this.tabs.get(this.activeTabId);
+    if (tab && tab.editor) {
+      if (ctrl && e.key === 'z') {
+        e.preventDefault();
+        tab.editor.trigger('', 'undo');
+      } else if (ctrl && e.key === 'y') {
+        e.preventDefault();
+        tab.editor.trigger('', 'redo');
+      } else if (ctrl && e.key === 'c') {
+        e.preventDefault();
+        tab.editor.trigger('', 'editor.action.clipboardCopyAction');
+      } else if (ctrl && e.key === 'v') {
+        e.preventDefault();
+        tab.editor.trigger('', 'editor.action.clipboardPasteAction');
+      } else if (ctrl && e.key === 'x') {
+        e.preventDefault();
+        tab.editor.trigger('', 'editor.action.clipboardCutAction');
+      } else if (ctrl && e.key === 'a') {
+        e.preventDefault();
+        tab.editor.trigger('', 'editor.action.selectAll');
+      }
+    }
 
     if (ctrl && e.key === 'n') {
       e.preventDefault();
@@ -222,7 +272,6 @@ class Elypad {
 
   async openFile() {
     if (!window.electronAPI) {
-      console.error('electron api unavailable');
       this.showError('electron api unavailable');
       return;
     }
@@ -241,7 +290,6 @@ class Elypad {
 
   async openFolder() {
     if (!window.electronAPI) {
-      console.error('electron api unavailable');
       this.showError('electron api unavailable');
       return;
     }
@@ -260,7 +308,6 @@ class Elypad {
 
   async loadFile(filePath) {
     if (!window.electronAPI) {
-      console.error('electron api unavailable');
       this.showError('electron api unavailable');
       return;
     }
@@ -270,6 +317,18 @@ class Elypad {
         this.switchToTab(tabId);
         return;
       }
+    }
+
+    const ext = filePath.split('.').pop().toLowerCase();
+    const imageExts = ['png', 'jpg', 'jpeg', 'gif'];
+    const audioExts = ['mp3', 'wav', 'ogg'];
+
+    if (imageExts.includes(ext)) {
+      this.showMediaViewer('image', filePath);
+      return;
+    } else if (audioExts.includes(ext)) {
+      this.showMediaViewer('audio', filePath);
+      return;
     }
 
     try {
@@ -301,6 +360,31 @@ class Elypad {
     }
   }
 
+  showMediaViewer(type, filePath) {
+    this.mediaViewer.innerHTML = '';
+    this.mediaViewer.style.display = 'flex';
+
+    if (type === 'image') {
+      const img = document.createElement('img');
+      img.src = filePath;
+      img.style.maxWidth = '90%';
+      img.style.maxHeight = '90%';
+      this.mediaViewer.appendChild(img);
+    } else if (type === 'audio') {
+      const audio = document.createElement('audio');
+      audio.src = filePath;
+      audio.controls = true;
+      audio.style.width = '90%';
+      this.mediaViewer.appendChild(audio);
+    }
+
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'close-btn';
+    closeBtn.textContent = '×';
+    closeBtn.onclick = () => (this.mediaViewer.style.display = 'none');
+    this.mediaViewer.appendChild(closeBtn);
+  }
+
   async loadFolder(folderPath) {
     this.currentFolder = folderPath;
     await this.refreshFileTree();
@@ -318,7 +402,6 @@ class Elypad {
     if (!this.currentFolder) return;
 
     if (!window.electronAPI) {
-      console.error('electron api unavailable');
       this.showError('electron api unavailable');
       return;
     }
@@ -338,6 +421,7 @@ class Elypad {
   }
 
   renderFileTree(items, parentPath, container = this.fileTreeEl) {
+    if (!container) return;
     container.innerHTML = '';
 
     items.sort((a, b) => {
@@ -350,12 +434,22 @@ class Elypad {
       const itemEl = document.createElement('div');
       itemEl.className = `tree-item ${item.isDirectory ? 'directory' : 'file'}`;
 
-      if (!item.isDirectory && item.name.endsWith('.lua')) {
-        itemEl.classList.add('lua');
-      }
+      const ext = item.isDirectory ? 'directory' : item.name.split('.').pop().toLowerCase();
+      const iconMap = {
+        directory: 'directory',
+        lua: 'lua-file',
+        png: 'image',
+        jpg: 'image',
+        jpeg: 'image',
+        gif: 'image',
+        mp3: 'audio',
+        wav: 'audio',
+        ogg: 'audio'
+      };
+      const icon = iconMap[ext] || 'file';
 
       itemEl.innerHTML = `
-        <img src="icons/${item.isDirectory ? 'directory' : (item.name.endsWith('.lua') ? 'lua-file' : 'file')}.svg" alt="${item.isDirectory ? 'folder' : 'file'}" class="icon">
+        <img src="icons/${icon}.svg" alt="${item.isDirectory ? 'folder' : 'file'}" class="icon">
         <div class="name">${item.name}</div>
       `;
 
@@ -378,7 +472,6 @@ class Elypad {
 
   async toggleDirectory(element, dirPath) {
     if (!window.electronAPI) {
-      console.error('electron api unavailable');
       this.showError('electron api unavailable');
       return;
     }
@@ -460,7 +553,7 @@ class Elypad {
     if (!tab) return;
 
     if (tab.modified) {
-      const save = confirm(`save changes to ${tab.name}?`);
+      const save = confirm(`Save changes to ${tab.name}?`);
       if (save) {
         this.saveFile(tab);
       }
@@ -637,12 +730,16 @@ class Elypad {
   }
 
   showFindDialog() {
-    this.findDialogOverlay.classList.add('show');
-    this.findInput.focus();
+    if (this.findDialogOverlay) {
+      this.findDialogOverlay.classList.add('show');
+      this.findInput.focus();
+    }
   }
 
   closeFindDialog() {
-    this.findDialogOverlay.classList.remove('show');
+    if (this.findDialogOverlay) {
+      this.findDialogOverlay.classList.remove('show');
+    }
   }
 
   findNext() {
@@ -652,31 +749,35 @@ class Elypad {
     const tab = this.tabs.get(this.activeTabId);
     if (!tab || !tab.editor) return;
 
+    const caseSensitive = document.getElementById('case-sensitive').checked;
+    const wholeWord = document.getElementById('whole-word').checked;
+    const regex = document.getElementById('regex').checked;
+
     const searchResult = tab.editor.getModel().findNextMatch(
       searchTerm,
       tab.editor.getPosition(),
-      false,
-      true,
-      null,
+      regex,
+      caseSensitive,
+      wholeWord ? searchTerm : null,
       true
     );
 
     if (searchResult) {
       tab.editor.setSelection(searchResult.range);
-      tab.editor.revealLine(searchResult.range.startLine);
+      tab.editor.revealLine(searchResult.range.startLineNumber);
       tab.editor.focus();
     } else {
       const firstResult = tab.editor.getModel().findNextMatch(
         searchTerm,
         { lineNumber: 1, column: 1 },
-        false,
-        true,
-        null,
+        regex,
+        caseSensitive,
+        wholeWord ? searchTerm : null,
         true
       );
       if (firstResult) {
         tab.editor.setSelection(firstResult.range);
-        tab.editor.revealLine(firstResult.range.startLine);
+        tab.editor.revealLine(firstResult.range.startLineNumber);
         tab.editor.focus();
       }
     }
@@ -689,31 +790,35 @@ class Elypad {
     const tab = this.tabs.get(this.activeTabId);
     if (!tab || !tab.editor) return;
 
+    const caseSensitive = document.getElementById('case-sensitive').checked;
+    const wholeWord = document.getElementById('whole-word').checked;
+    const regex = document.getElementById('regex').checked;
+
     const searchResult = tab.editor.getModel().findPreviousMatch(
       searchTerm,
       tab.editor.getPosition(),
-      false,
-      true,
-      null,
+      regex,
+      caseSensitive,
+      wholeWord ? searchTerm : null,
       true
     );
 
     if (searchResult) {
       tab.editor.setSelection(searchResult.range);
-      tab.editor.revealLine(searchResult.range.startLine);
+      tab.editor.revealLine(searchResult.range.startLineNumber);
       tab.editor.focus();
     } else {
       const lastResult = tab.editor.getModel().findPreviousMatch(
         searchTerm,
         { lineNumber: tab.editor.getModel().getLineCount(), column: tab.editor.getModel().getLineContent(tab.editor.getModel().getLineCount()).length + 1 },
-        false,
-        true,
-        null,
+        regex,
+        caseSensitive,
+        wholeWord ? searchTerm : null,
         true
       );
       if (lastResult) {
         tab.editor.setSelection(lastResult.range);
-        tab.editor.revealLine(lastResult.range.startLine);
+        tab.editor.revealLine(lastResult.range.startLineNumber);
         tab.editor.focus();
       }
     }
@@ -724,20 +829,34 @@ class Elypad {
     if (!tab || !tab.editor) return;
 
     const searchTerm = this.findInput.value;
-    const replaceTerm = this.replaceInput.value;
+    const replaceText = this.replaceInput.value;
+    const caseSensitive = document.getElementById('case-sensitive').checked;
+    const wholeWord = document.getElementById('whole-word').checked;
+    const regex = document.getElementById('regex').checked;
+
+    if (!searchTerm) return;
 
     const selection = tab.editor.getSelection();
     if (!selection.isEmpty()) {
       const selectedText = tab.editor.getModel().getValueInRange(selection);
-      if (selectedText === searchTerm) {
+      const matches = tab.editor.getModel().findMatches(
+        searchTerm,
+        selection,
+        regex,
+        caseSensitive,
+        wholeWord ? searchTerm : null,
+        true
+      );
+      if (matches.length > 0 && matches[0].range.equalsRange(selection)) {
         tab.editor.executeEdits('', [{
           range: selection,
-          text: replaceTerm
+          text: replaceText
         }]);
         tab.content = tab.editor.getValue();
         this.markTabAsModified(tab.id);
       }
     }
+    this.findNext();
   }
 
   replaceAll() {
@@ -745,67 +864,89 @@ class Elypad {
     if (!tab || !tab.editor) return;
 
     const searchTerm = this.findInput.value;
-    const replaceTerm = this.replaceInput.value;
+    const replaceText = this.replaceInput.value;
+    const caseSensitive = document.getElementById('case-sensitive').checked;
+    const wholeWord = document.getElementById('whole-word').checked;
+    const regex = document.getElementById('regex').checked;
 
     if (!searchTerm) return;
 
-    const matches = tab.editor.getModel().findMatches(searchTerm, true, false, true, null, true);
+    const matches = tab.editor.getModel().findMatches(
+      searchTerm,
+      true,
+      regex,
+      caseSensitive,
+      wholeWord ? searchTerm : null,
+      true
+    );
     tab.editor.getModel().pushStackElement();
     matches.forEach(match => {
       tab.editor.executeEdits('', [{
         range: match.range,
-        text: replaceTerm
+        text: replaceText
       }]);
     });
+
     tab.content = tab.editor.getValue();
     this.markTabAsModified(tab.id);
   }
 
   toggleSidebar() {
-    this.sidebar.classList.toggle('collapsed');
+    if (this.sidebar) {
+      this.sidebar.classList.toggle('expanded');
+    }
   }
 
   updateStatusBar() {
     const tab = this.tabs.get(this.activeTabId);
     if (!tab || !tab.editor) {
-      this.cursorPosition.textContent = 'line 1, column 1';
-      this.fileType.textContent = 'plain text';
+      if (this.cursorPosition) this.cursorPosition.textContent = 'Line 1, Column 1';
+      if (this.fileType) this.fileType.textContent = 'Plain Text';
       return;
     }
 
     const position = tab.editor.getPosition();
-    this.cursorPosition.textContent = `line ${position.lineNumber}, column ${position.column}`;
-
-    if (tab.name.endsWith('.lua')) {
-      this.fileType.textContent = 'lua';
-    } else {
-      this.fileType.textContent = 'plain text';
+    if (this.cursorPosition) {
+      this.cursorPosition.textContent = `Line ${position.lineNumber}, Column ${position.column}`;
+    }
+    if (this.fileType) {
+      this.fileType.textContent = tab.name.endsWith('.lua') ? 'Lua' : 'Plain Text';
     }
   }
 
-  hideWelcomeScreen() {
+hideWelcomeScreen() {
+  if (this.welcomeScreen) {
     this.welcomeScreen.style.display = 'none';
+    this.editorContainer.style.display = 'block';
+    this.editorContainer.style.position = 'relative';
   }
+}
 
   showWelcomeScreen() {
-    this.welcomeScreen.style.display = 'flex';
-    this.editorContainer.innerHTML = '';
-    this.editorContainer.appendChild(this.welcomeScreen);
-  }
-
+  if (!this.welcomeScreen || !this.editorContainer) return;
+  this.editorContainer.innerHTML = '';
+  this.editorContainer.style.position = 'relative';
+  this.editorContainer.style.display = 'block';
+  this.welcomeScreen.style.display = 'block';
+  this.welcomeScreen.style.position = 'absolute';
+  this.welcomeScreen.style.top = '50%';
+  this.welcomeScreen.style.left = '50%';
+  this.welcomeScreen.style.transform = 'translate(-50%, -50%)';
+  this.editorContainer.appendChild(this.welcomeScreen);
+}
   showStatus(message) {
-    console.log('status:', message);
+    console.log('Status:', message);
   }
 
   showError(message) {
     console.error('error:', message);
-    alert('error: ' + message);
+    alert('Error:' + message);
   }
 
   handleFileChanged(filePath) {
     for (const [tabId, tab] of this.tabs) {
       if (tab.path === filePath) {
-        console.log('file changed externally:', filePath);
+        console.log('File changed externally:', filePath);
         break;
       }
     }
