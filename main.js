@@ -9,18 +9,18 @@ let mainWindow;
 let fileWatcher;
 
 function createWindow() {
- mainWindow = new BrowserWindow({
-  width: 1400,
-  height: 900,
-  icon: path.join(__dirname, 'icon.png'),
-  webPreferences: {
-    nodeIntegration: false,
-    contextIsolation: true,
-    preload: path.join(__dirname, 'preload.js')
-  },
-  backgroundColor: '#1a1a1a',
-  show: false
-});
+  mainWindow = new BrowserWindow({
+    width: 1400,
+    height: 900,
+    icon: path.join(__dirname, 'icon.png'),
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(__dirname, 'preload.js')
+    },
+    backgroundColor: '#1a1a1a',
+    show: false
+  });
 
   mainWindow.loadFile('index.html').then(() => {
     console.log('index.html loaded successfully');
@@ -32,16 +32,16 @@ function createWindow() {
     mainWindow.show();
   });
 
-  
-Menu.setApplicationMenu(null);
-
+  Menu.setApplicationMenu(null);
 }
 
 ipcMain.handle('open-file-dialog', async () => {
   try {
     const result = await dialog.showOpenDialog(mainWindow, {
       properties: ['openFile'],
-      filters: [{ name: 'lua files', extensions: ['lua'] }, { name: 'all files', extensions: ['*'] }]
+      filters: [
+        { name: 'all files', extensions: ['lua', 'png', 'jpg', 'jpeg', 'gif', 'mp3', 'wav', 'ogg', '*'] }
+      ]
     });
     return result;
   } catch (err) {
